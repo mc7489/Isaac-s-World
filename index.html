@@ -48,14 +48,20 @@ html, body {
   justify-content:space-between;
   align-items:center;
   width:100%;
-  padding:6px 14px;
+  padding:8px 14px;
   flex-shrink:0;
+  gap:10px;
+}
+#moveZone {
+  display:flex;
+  gap:10px;
+  flex:1;
 }
 .mbtn {
-  background:rgba(124,58,237,0.55);
-  border:2px solid #7c3aed;
+  background:rgba(124,58,237,0.65);
+  border:3px solid #a78bfa;
   color:#fff;
-  border-radius:10px;
+  border-radius:14px;
   cursor:pointer;
   user-select:none;
   -webkit-user-select:none;
@@ -63,15 +69,43 @@ html, body {
   font-family:monospace;
   font-weight:bold;
   flex-shrink:0;
+  min-width:70px;
+  min-height:60px;
+  font-size:22px;
+  padding:14px 22px;
+  box-shadow:0 4px rgba(124,58,237,0.4), inset 0 1px rgba(255,255,255,0.2);
+  transition:background 0.08s, transform 0.08s;
 }
+.mbtn:active {
+  background:rgba(124,58,237,0.9);
+  transform:scale(0.93);
+}
+#btnJ {
+  min-width:100px;
+  font-size:20px;
+  letter-spacing:1px;
+}
+/* Invisible full-screen touch zones */
+#touchLeft, #touchRight {
+  position:fixed;
+  top:0;
+  bottom:0;
+  width:50%;
+  z-index:5;
+  touch-action:none;
+  -webkit-tap-highlight-color:transparent;
+}
+#touchLeft  { left:0; }
+#touchRight { right:0; }
 #overlay {
   position:fixed;
   top:0;left:0;right:0;bottom:0;
   display:flex;
   align-items:center;
   justify-content:center;
-  z-index:20;
+  z-index:30;
   background:rgba(0,0,0,0.55);
+  pointer-events:all;
 }
 #overlayBox {
   background:rgba(8,3,20,0.97);
@@ -122,18 +156,21 @@ html, body {
   </div>
   <canvas id="gameCanvas"></canvas>
   <div id="dpad">
-    <div style="display:flex;gap:8px;">
+    <div id="moveZone">
       <button class="mbtn" id="btnL">&#9664;</button>
       <button class="mbtn" id="btnR">&#9654;</button>
     </div>
-    <button class="mbtn" id="btnJ">&#8679;</button>
+    <button class="mbtn" id="btnJ">&#8679; JUMP</button>
   </div>
 </div>
+<div id="touchLeft"></div>
+<div id="touchRight"></div>
 <div id="overlay">
   <div id="overlayBox">
     <h1>&#127775; ISAAC'S<br>WORLD!</h1>
     <p><span class="hi">Arrow Keys / WASD</span> &mdash; Move</p>
     <p><span class="hi">Up / W / Space</span> &mdash; Jump</p>
+    <p>&#128242; <span class="hi">Touch left half</span> to move &bull; <span class="hi">Touch right half</span> to jump</p>
     <p>Stomp enemies &bull; Collect gems &bull; Hit <span class="hi">?</span> blocks</p>
     <p>Reach the <span class="hi">flag</span> to advance!</p>
     <button class="obtn" id="startBtn">&#9654; START!</button>
@@ -160,9 +197,8 @@ function resize() {
   var vw = window.innerWidth;
   var vh = window.innerHeight;
 
-  // Estimate HUD and dpad heights before scaling
-  var hudH  = 36;
-  var dpadH = 70;
+  var hudH  = 40;
+  var dpadH = 90;
   var availH = vh - hudH - dpadH;
   var availW = vw;
 
@@ -176,18 +212,23 @@ function resize() {
   cv.style.width  = cw + 'px';
   cv.style.height = ch + 'px';
 
-  var hudFontSize  = Math.max(9,  Math.floor(13 * scale));
-  var btnFontSize  = Math.max(14, Math.floor(20 * scale));
-  var btnPad       = Math.max(8,  Math.floor(13 * scale));
+  var hudFontSize = Math.max(9,  Math.floor(13 * scale));
+  var btnFontSize = Math.max(18, Math.floor(24 * scale));
+  var btnPadV     = Math.max(12, Math.floor(16 * scale));
+  var btnPadH     = Math.max(18, Math.floor(24 * scale));
+  var btnMinW     = Math.max(70, Math.floor(80 * scale));
+  var btnMinH     = Math.max(55, Math.floor(64 * scale));
 
   hud.style.width    = cw + 'px';
   hud.style.fontSize = hudFontSize + 'px';
+  dpad.style.width   = cw + 'px';
 
-  dpad.style.width = cw + 'px';
   var btns = document.querySelectorAll('.mbtn');
   for (var i = 0; i < btns.length; i++) {
-    btns[i].style.fontSize = btnFontSize + 'px';
-    btns[i].style.padding  = btnPad + 'px ' + Math.floor(btnPad * 1.6) + 'px';
+    btns[i].style.fontSize  = btnFontSize + 'px';
+    btns[i].style.padding   = btnPadV + 'px ' + btnPadH + 'px';
+    btns[i].style.minWidth  = btnMinW + 'px';
+    btns[i].style.minHeight = btnMinH + 'px';
   }
 }
 resize();
@@ -204,7 +245,10 @@ var SPD    = 4.5;
 var PI2    = Math.PI * 2;
 
 /* ═══════════════════════════════════════════════════
-   INPUT
+   INPUT — keyboard + large invisible touch zones
+   Left half of screen = move (left/right based on
+   which side of that half you tap).
+   Right half of screen = jump.
 ═══════════════════════════════════════════════════ */
 var K = {};
 document.addEventListener('keydown', function(e){
@@ -214,6 +258,86 @@ document.addEventListener('keydown', function(e){
 });
 document.addEventListener('keyup', function(e){ if(e.code) K[e.code]=false; });
 
+/* Track active touches per zone */
+var leftTouches  = {}; // touchId -> 'left'|'right'
+var rightTouches = {}; // touchId -> true
+
+function updateMoveKeys(){
+  var hasLeft=false, hasRight=false;
+  for(var id in leftTouches){
+    if(leftTouches[id]==='left')  hasLeft=true;
+    if(leftTouches[id]==='right') hasRight=true;
+  }
+  K['LEFT']  = hasLeft;
+  K['RIGHT'] = hasRight;
+}
+
+/* Left zone — left quarter = go left, right quarter = go right */
+var tzL = document.getElementById('touchLeft');
+if(tzL){
+  tzL.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    var rect = tzL.getBoundingClientRect();
+    for(var i=0;i<e.changedTouches.length;i++){
+      var tc = e.changedTouches[i];
+      var relX = tc.clientX - rect.left;
+      leftTouches[tc.identifier] = relX < rect.width/2 ? 'left' : 'right';
+    }
+    updateMoveKeys();
+  }, false);
+  tzL.addEventListener('touchmove', function(e){
+    e.preventDefault();
+    var rect = tzL.getBoundingClientRect();
+    for(var i=0;i<e.changedTouches.length;i++){
+      var tc = e.changedTouches[i];
+      var relX = tc.clientX - rect.left;
+      leftTouches[tc.identifier] = relX < rect.width/2 ? 'left' : 'right';
+    }
+    updateMoveKeys();
+  }, false);
+  tzL.addEventListener('touchend', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){
+      delete leftTouches[e.changedTouches[i].identifier];
+    }
+    updateMoveKeys();
+  }, false);
+  tzL.addEventListener('touchcancel', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){
+      delete leftTouches[e.changedTouches[i].identifier];
+    }
+    updateMoveKeys();
+  }, false);
+}
+
+/* Right zone — tap/hold anywhere = jump */
+var tzR = document.getElementById('touchRight');
+if(tzR){
+  tzR.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){
+      rightTouches[e.changedTouches[i].identifier]=true;
+    }
+    K['JUMP'] = true;
+  }, false);
+  tzR.addEventListener('touchend', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){
+      delete rightTouches[e.changedTouches[i].identifier];
+    }
+    if(Object.keys(rightTouches).length===0) K['JUMP']=false;
+  }, false);
+  tzR.addEventListener('touchcancel', function(e){
+    e.preventDefault();
+    for(var i=0;i<e.changedTouches.length;i++){
+      delete rightTouches[e.changedTouches[i].identifier];
+    }
+    if(Object.keys(rightTouches).length===0) K['JUMP']=false;
+  }, false);
+}
+
+/* Visible buttons still work as fallback */
 function bindBtn(id, key){
   var el = document.getElementById(id);
   if (!el) return;
@@ -1019,11 +1143,15 @@ function showOverlay(title,sub,btn,isReset){
     '<h1>'+title+'</h1>'+
     '<p style="margin:10px 0;">'+sub+'</p>'+
     '<button class="obtn" id="startBtn">'+btn+'</button>';
-  document.getElementById('overlay').style.display='flex';
+  var ov = document.getElementById('overlay');
+  ov.style.display='flex';
+  ov.style.pointerEvents='all';
   document.getElementById('startBtn').onclick = isReset ? startGame : startNextLevel;
 }
 function hideOverlay(){
-  document.getElementById('overlay').style.display='none';
+  var ov = document.getElementById('overlay');
+  ov.style.display='none';
+  ov.style.pointerEvents='none';
 }
 
 /* ═══════════════════════════════════════════════════
