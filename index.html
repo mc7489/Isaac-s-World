@@ -22,7 +22,7 @@ top:0; left:0; right:0; bottom:0;
 display:flex;
 flex-direction:column;
 align-items:center;
-justify-content:flex-start;
+justify-content:center;
 background:#0d0620;
 }
 
@@ -39,7 +39,7 @@ color:#fbbf24;
 font-weight:bold;
 white-space:nowrap;
 flex-shrink:0;
-width:100%; /* will be set by JS */
+/* width set by JS */
 }
 
 /* ── Canvas ── */
@@ -58,7 +58,7 @@ display:flex;
 justify-content:space-between;
 align-items:center;
 flex-shrink:0;
-width:100%; /* set by JS */
+/* width set by JS */
 padding:0 10px;
 }
 
@@ -216,68 +216,62 @@ function resize() {
   var vh = window.innerHeight;
   var isLandscape = vw > vh;
 
-  // In landscape, buttons are smaller so canvas gets more room
+  // Reserve space for HUD and dpad
   var dpadH = isLandscape ? Math.max(52, Math.floor(vh * 0.18)) : Math.max(68, Math.floor(vh * 0.14));
   var hudH  = isLandscape ? Math.max(28, Math.floor(vh * 0.08)) : Math.max(32, Math.floor(vh * 0.06));
 
+  // 8px horizontal padding so canvas never clips screen edges
+  var hPad   = 8;
+  var availW = vw - hPad * 2;
   var availH = vh - hudH - dpadH;
-  var availW = vw;
 
   var scale = Math.min(availW / W, availH / H);
   var cw = Math.floor(W * scale);
   var ch = Math.floor(H * scale);
 
-  // Center horizontally
-  var leftOffset = Math.floor((vw - cw) / 2);
-
-  // Apply canvas
+  // Canvas — flexbox centers it; just set size, no margins
   cv.style.width  = cw + 'px';
   cv.style.height = ch + 'px';
 
-  // HUD
+  // HUD — same width as canvas, flexbox handles centering
   hud.style.width      = cw + 'px';
   hud.style.height     = hudH + 'px';
   hud.style.fontSize   = Math.max(9, Math.floor(hudH * 0.42)) + 'px';
-  hud.style.padding    = '0 ' + Math.max(8, Math.floor(cw * 0.015)) + 'px';
-  hud.style.marginLeft = leftOffset + 'px';
+  hud.style.padding    = '0 ' + Math.max(8, Math.floor(cw * 0.02)) + 'px';
+  hud.style.marginLeft = '0';
 
-  // Dpad
+  // Dpad — same width as canvas
   dpad.style.width      = cw + 'px';
   dpad.style.height     = dpadH + 'px';
-  dpad.style.marginLeft = leftOffset + 'px';
-  dpad.style.padding    = Math.floor(dpadH * 0.1) + 'px ' + Math.max(8, Math.floor(cw * 0.015)) + 'px';
+  dpad.style.marginLeft = '0';
+  dpad.style.padding    = Math.floor(dpadH * 0.1) + 'px ' + Math.max(8, Math.floor(cw * 0.02)) + 'px';
 
-  // Buttons — fill the dpad height generously
-  var btnH   = Math.floor(dpadH * 0.78);
+  // Buttons
+  var btnH  = Math.floor(dpadH * 0.78);
   var btnFnt = Math.max(14, Math.floor(btnH * 0.48));
-  var btnW   = Math.max(60, Math.floor(cw   * 0.13));
-  var jumpW  = Math.max(80, Math.floor(cw   * 0.18));
-
-  var btns = document.querySelectorAll('.mbtn');
+  var btnW  = Math.max(60, Math.floor(cw * 0.13));
+  var jumpW = Math.max(80, Math.floor(cw * 0.18));
+  var btns  = document.querySelectorAll('.mbtn');
   for (var i = 0; i < btns.length; i++) {
-    btns[i].style.height    = btnH + 'px';
-    btns[i].style.fontSize  = btnFnt + 'px';
-    btns[i].style.minWidth  = (btns[i].id === 'btnJ' ? jumpW : btnW) + 'px';
-    btns[i].style.padding   = '0 ' + Math.floor(btnW * 0.2) + 'px';
+    btns[i].style.height   = btnH + 'px';
+    btns[i].style.fontSize = btnFnt + 'px';
+    btns[i].style.minWidth = (btns[i].id === 'btnJ' ? jumpW : btnW) + 'px';
+    btns[i].style.padding  = '0 ' + Math.floor(btnW * 0.2) + 'px';
   }
 
-  // Touch zone — sits exactly over the dpad area
-  var dpadTop = hudH + ch;
+  // Touch zone: canvas is centered by flexbox so left edge = (vw-cw)/2
+  var canvasLeft = Math.floor((vw - cw) / 2);
+  var dpadTop    = hudH + ch;
+  var extendUp   = Math.floor(ch * 0.5);
   tz.style.position = 'fixed';
-  tz.style.left     = leftOffset + 'px';
+  tz.style.left     = canvasLeft + 'px';
   tz.style.width    = cw + 'px';
-  tz.style.top      = dpadTop + 'px';
-  tz.style.height   = dpadH + 'px';
+  tz.style.top      = (dpadTop - extendUp) + 'px';
+  tz.style.height   = (dpadH + extendUp) + 'px';
   tz.style.display  = 'flex';
   tz.style.zIndex   = '8';
 
-  // Also allow touches anywhere on the lower half of the CANVAS too
-  // by extending touch zone upward by half the canvas height
-  var extendUp = Math.floor(ch * 0.5);
-  tz.style.top    = (dpadTop - extendUp) + 'px';
-  tz.style.height = (dpadH  + extendUp)  + 'px';
-
-  layoutCache = { cw:cw, ch:ch, hudH:hudH, dpadH:dpadH, leftOffset:leftOffset, scale:scale };
+  layoutCache = { cw:cw, ch:ch, canvasLeft:canvasLeft, hudH:hudH, dpadH:dpadH, scale:scale };
 }
 
 resize();
@@ -314,12 +308,12 @@ function updateFromTouches() {
 
 function classifyTouch(clientX) {
   var lc  = layoutCache;
-  var lo  = lc.leftOffset || 0;
+  var lo  = lc.canvasLeft || Math.floor((window.innerWidth - (lc.cw || window.innerWidth)) / 2);
   var cw  = lc.cw || window.innerWidth;
-  var rel = clientX - lo;          // position within canvas width
-  if (rel >= cw / 2) return 'J';  // right half = jump
-  if (rel < cw / 4)  return 'L';  // left quarter = go left
-  return 'R';                      // middle-left = go right
+  var rel = clientX - lo;         // position within canvas width
+  if (rel >= cw / 2) return 'J'; // right half = jump
+  if (rel < cw / 4)  return 'L'; // left quarter = go left
+  return 'R';                     // middle-left = go right
 }
 
 var tzEl = document.getElementById('touchZone');
